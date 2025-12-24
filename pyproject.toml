@@ -1,0 +1,18 @@
+[project]
+name = "usd-asset-packager"
+version = "0.1.0"
+description = "Self-contained USD asset packager for Isaac Sim / Omniverse with MDL-friendly handling."
+authors = [{ name = "Automation", email = "dev@example.com" }]
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
