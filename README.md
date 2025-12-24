@@ -4,7 +4,7 @@
 
 ## 功能要点
 - 递归扫描 layer / references / payload / subLayers / 材质网络（UsdShade 纹理、MDL shader）。
-- 复制并归拢：纹理至 out_dir/textures，MDL 至 out_dir/materials，可选复制子 USD/GLB 到 out_dir/assets（GLB 自动转换为 USD）。
+- 复制并归拢：纹理至 out_dir/textures，MDL 至 out_dir/materials，可选复制子 USD/GLB 到 out_dir/assets（GLB 自动通过 Omniverse converter 转换为 USD）。
 - 路径重写：基于每个 layer 目录改写为相对路径，最大化脱离全局环境变量；记录 before/after。
 - MDL 兜底：生成 out_dir/env/mdl_paths.env 供启动脚本 export；提供一键脚本启动 Isaac Sim 并打开打包结果。
 - Dry-run 支持：仅扫描并输出报告，不复制/改写。
@@ -18,8 +18,8 @@
 
 - Dry-run（仅扫描 + 报告）：
   - `./scripts/isaac_python.sh -m usd_asset_packager --input scene.usd --out out_dir --dry-run`
-- 实际打包并复制子 USD：
-  - `./scripts/isaac_python.sh -m usd_asset_packager --input scene.usd --out out_dir --copy-usd-deps`
+- 实际打包并复制子 USD（含 glTF/GLB 转换为 USD）：
+  - `./scripts/isaac_python.sh -m usd_asset_packager --input scene.usd --out out_dir --copy-usd-deps --flatten layerstack`
 - 打开打包结果（自动 export MDL_SYSTEM_PATH）：
   - `./scripts/open_in_isaac_ui.sh out_dir/scene.usd`
 
@@ -52,6 +52,13 @@
   - keep_tree（默认）：尽量保持原始目录结构。
   - hash_prefix：文件名前加 hash 防重名。
 - Flatten 选项：none（默认）；layerstack/full 会在打包后把场景打平成单一 USD（仍外部引用纹理）。
+
+## 为什么不用 usd_from_gltf？
+- google/usd_from_gltf 已归档且依赖链复杂，常与 Isaac Sim 内置 USD/ABI 冲突。
+- 我们默认使用 Omniverse/Isaac 自带的 `omni.kit.asset_converter` Python API：无需额外安装，材质/MDL 兼容性更高，与 Isaac 渲染一致。
+- 如果 `omni.kit.asset_converter` 未启用，转换会被标记失败且写入 report.json，并给出启用提示；不会导致崩溃。
+- 可选降级：`--converter=fallback_gltf2usd` 使用纯 Python gltf2usd（若已安装），仅保证几何 + 基础 PBR，材质保真度不保证。
+- 如需完全禁用 glTF/GLB 转换，可加 `--no-convert-gltf`，此时仅记录引用不改写。
 
 ## 示例工作流
 1) 预检查：

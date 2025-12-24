@@ -55,13 +55,45 @@ class PackReport:
     warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict:
+        def _asset_dict(asset: AssetRef) -> Dict:
+            return {
+                "asset_type": asset.asset_type,
+                "original_path": asset.original_path,
+                "resolved_path": asset.resolved_path,
+                "layer_identifier": asset.layer_identifier,
+                "prim_path": asset.prim_path,
+                "attr_name": asset.attr_name,
+                "is_remote": asset.is_remote,
+                "is_udim": asset.is_udim,
+                "notes": asset.notes,
+            }
+
+        def _copy_dict(cp: CopyAction) -> Dict:
+            return {
+                "asset": _asset_dict(cp.asset),
+                "target_path": cp.target_path,
+                "success": cp.success,
+                "reason": cp.reason,
+            }
+
+        def _rewrite_dict(rw: RewriteAction) -> Dict:
+            return {
+                "layer_identifier": rw.layer_identifier,
+                "prim_path": rw.prim_path,
+                "attr_name": rw.attr_name,
+                "before": rw.before,
+                "after": rw.after,
+                "success": rw.success,
+                "reason": rw.reason,
+            }
+
         return {
             "stats": self.stats,
             "mdl_paths": self.mdl_paths,
             "warnings": self.warnings,
-            "assets": [asset.__dict__ for asset in self.assets],
-            "copies": [copy.__dict__ for copy in self.copies],
-            "rewrites": [rewrite.__dict__ for rewrite in self.rewrites],
+            "assets": [_asset_dict(asset) for asset in self.assets],
+            "copies": [_copy_dict(copy) for copy in self.copies],
+            "rewrites": [_rewrite_dict(rewrite) for rewrite in self.rewrites],
         }
 
     def update_stats(self) -> None:

@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from .glb import convert_glb_to_usd
+from .converter import ConverterBackend
 from .resolver import resolve_with_layer, udim_tiles
 from .types import AssetRef, CopyAction
 
@@ -20,8 +20,10 @@ def _target_base(asset_type: str, out_dir: Path) -> Path:
         return out_dir / "textures"
     if asset_type == "mdl":
         return out_dir / "materials"
-    if asset_type in ("usd", "glb"):
+    if asset_type == "usd":
         return out_dir / "assets"
+    if asset_type == "glb":
+        return out_dir / "assets_converted_gltf"
     return out_dir / "assets" / "misc"
 
 
@@ -46,7 +48,9 @@ def plan_target_path(asset: AssetRef, out_dir: Path, collision_strategy: str, ba
 
 
 def copy_asset(asset: AssetRef, out_dir: Path, collision_strategy: str, base_root: Path,
-               layer_real_map: dict[str, str], logger: logging.Logger) -> CopyAction:
+               layer_real_map: dict[str, str], logger: logging.Logger,
+               converter_backend: Optional[ConverterBackend] = None,
+               convert_gltf: bool = True) -> CopyAction:
     if asset.is_remote:
         return CopyAction(asset=asset, target_path=None, success=False, reason="remote source not copied")
 
@@ -64,7 +68,13 @@ def copy_asset(asset: AssetRef, out_dir: Path, collision_strategy: str, base_roo
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         if asset.asset_type == "glb":
-            ok, reason = convert_glb_to_usd(src, target, logger)
+            if not convert_gltf:
+                return CopyAction(asset=asset, target_path=str(target), success=False,
+                                  reason="glTF conversion disabled (--no-convert-gltf)")
+            if not converter_backend or not converter_backend.available:
+                return CopyAction(asset=asset, target_path=str(target), success=False,
+                                  reason="glTF converter unavailable; enable omni.kit.asset_converter")
+            ok, reason = converter_backend.convert(src, target)
             return CopyAction(asset=asset, target_path=str(target), success=ok, reason=reason)
         if asset.is_udim and "<UDIM>" in asset.original_path:
             pattern_dir, tiles = udim_tiles(str(src))

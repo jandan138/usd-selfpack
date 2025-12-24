@@ -18,6 +18,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="仅扫描不复制不改写")
     parser.add_argument("--collision-strategy", default="keep_tree", choices=["keep_tree", "hash_prefix"],
                         help="文件命名冲突策略")
+    parser.add_argument("--no-convert-gltf", dest="convert_gltf", action="store_false",
+                        help="禁用 glTF/GLB -> USD 转换，仅记录但不改写")
+    parser.add_argument("--convert-gltf", dest="convert_gltf", action="store_true", default=True,
+                        help="启用 glTF/GLB 转换（默认）")
+    parser.add_argument("--converter", default="omni", choices=["omni", "fallback_gltf2usd"],
+                        help="选择转换后端；omni 使用 omni.kit.asset_converter，fallback 为降级方案")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"], help="日志级别")
     return parser
 
@@ -35,6 +41,8 @@ def main(argv: list[str] | None = None) -> None:
         collision_strategy=args.collision_strategy,
         flatten=args.flatten,
         log_level=args.log_level,
+        convert_gltf=args.convert_gltf,
+        converter=args.converter,
     )
     packager.run()
 

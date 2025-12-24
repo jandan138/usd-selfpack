@@ -10,6 +10,21 @@ from pxr import Sdf, Usd
 from .types import AssetRef, RewriteAction
 
 
+def _get_list_items(list_op: Sdf.ListOp, kind: str):
+    getter = getattr(list_op, f"Get{kind}Items", None)
+    if getter:
+        return getter()
+    return getattr(list_op, f"{kind.lower()}Items", [])
+
+
+def _set_list_items(list_op: Sdf.ListOp, kind: str, items):
+    setter = getattr(list_op, f"Set{kind}Items", None)
+    if setter:
+        setter(items)
+    else:
+        setattr(list_op, f"{kind.lower()}Items", items)
+
+
 def _layer_by_identifier(stage: Usd.Stage) -> Dict[str, Sdf.Layer]:
     mapping: Dict[str, Sdf.Layer] = {}
     for layer in stage.GetLayerStack():
@@ -108,11 +123,12 @@ def rewrite_layers(stage: Usd.Stage, assets: List[AssetRef], copy_targets: Dict[
                 return new_items
 
             try:
-                list_op.SetExplicitItems(_replace(list_op.GetExplicitItems()))
-                list_op.SetAddedItems(_replace(list_op.GetAddedItems()))
-                list_op.SetPrependedItems(_replace(list_op.GetPrependedItems()))
-                list_op.SetAppendedItems(_replace(list_op.GetAppendedItems()))
-                prim.SetMetadata(meta_name, list_op)
+                new_op = Sdf.ReferenceListOp()
+                _set_list_items(new_op, "Explicit", _replace(_get_list_items(list_op, "Explicit")))
+                _set_list_items(new_op, "Added", _replace(_get_list_items(list_op, "Added")))
+                _set_list_items(new_op, "Prepended", _replace(_get_list_items(list_op, "Prepended")))
+                _set_list_items(new_op, "Appended", _replace(_get_list_items(list_op, "Appended")))
+                prim.SetMetadata(meta_name, new_op)
                 rewrites.append(
                     RewriteAction(layer_identifier=asset.layer_identifier, prim_path=asset.prim_path,
                                   attr_name=asset.attr_name, before=asset.original_path, after=rel_path,

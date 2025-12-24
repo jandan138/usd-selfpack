@@ -10,17 +10,28 @@ from .types import AssetRef
 
 
 def _gather_refs_from_listop(listop: Sdf.ListOp) -> List[Sdf.Reference]:
-    items = []
+    items: List[Sdf.Reference] = []
     if not listop:
         return items
-    for getter in (
-        listop.GetExplicitItems,
-        listop.GetPrependedItems,
-        listop.GetAppendedItems,
-        listop.GetAddedItems,
-    ):
+    getters = [
+        getattr(listop, "GetExplicitItems", None),
+        getattr(listop, "GetPrependedItems", None),
+        getattr(listop, "GetAppendedItems", None),
+        getattr(listop, "GetAddedItems", None),
+    ]
+    for getter in getters:
+        if getter is None:
+            continue
         try:
             items.extend(getter())
+        except Exception:
+            continue
+    # 兼容旧 API 的属性访问
+    for attr_name in ("explicitItems", "prependedItems", "appendedItems", "addedItems"):
+        try:
+            val = getattr(listop, attr_name, None)
+            if val:
+                items.extend(list(val))
         except Exception:
             continue
     return items
@@ -64,14 +75,18 @@ def scan_stage(stage: Usd.Stage, logger: logging.Logger) -> List[AssetRef]:
         for ref in _gather_refs_from_listop(ref_listop):
             asset_path = ref.assetPath
             resolved = resolve_with_layer(prim.GetStage().GetRootLayer().realPath, asset_path) if asset_path else None
-            _record_asset(asset_refs, "usd", asset_path or "", resolved, prim.GetStage().GetEditTarget().GetLayer().identifier,
+            asset_type = _guess_asset_type(prim, None, asset_path or "")
+            _record_asset(asset_refs, asset_type, asset_path or "", resolved,
+                          prim.GetStage().GetEditTarget().GetLayer().identifier,
                           prim.GetPath().pathString, "references")
 
         payload_listop = prim.GetMetadata("payloads")
         for payload in _gather_refs_from_listop(payload_listop):
             asset_path = payload.assetPath
             resolved = resolve_with_layer(prim.GetStage().GetRootLayer().realPath, asset_path) if asset_path else None
-            _record_asset(asset_refs, "usd", asset_path or "", resolved, prim.GetStage().GetEditTarget().GetLayer().identifier,
+            asset_type = _guess_asset_type(prim, None, asset_path or "")
+            _record_asset(asset_refs, asset_type, asset_path or "", resolved,
+                          prim.GetStage().GetEditTarget().GetLayer().identifier,
                           prim.GetPath().pathString, "payloads")
 
         # 3) 材质网络与通用 asset 属性
@@ -98,14 +113,15 @@ def scan_stage(stage: Usd.Stage, logger: logging.Logger) -> List[AssetRef]:
     return asset_refs
 
 
-def _guess_asset_type(prim: Usd.Prim, attr: Usd.Attribute, asset_path: str) -> str:
+def _guess_asset_type(prim: Usd.Prim, attr: Usd.Attribute | None, asset_path: str) -> str:
     """简单推测资产类型，仅用于报告分类。"""
 
-    if asset_path.lower().endswith((".usd", ".usda", ".usdc")):
+    lower = asset_path.lower()
+    if lower.endswith((".usd", ".usda", ".usdc")):
         return "usd"
-    if asset_path.lower().endswith((".glb", ".gltf")):
+    if lower.endswith((".glb", ".gltf")):
         return "glb"
-    if asset_path.lower().endswith(".mdl") or "mdl" in attr.GetName().lower():
+    if lower.endswith(".mdl") or (attr and "mdl" in attr.GetName().lower()):
         return "mdl"
     # Shader 类型辅助判断
     if prim.IsA(UsdShade.Shader):
@@ -114,6 +130,6 @@ def _guess_asset_type(prim: Usd.Prim, attr: Usd.Attribute, asset_path: str) -> s
         if shader_id and "mdl" in shader_id.lower():
             return "mdl"
     # 纹理常见后缀
-    if asset_path.lower().endswith((".png", ".jpg", ".jpeg", ".tga", ".exr", ".hdr", ".ktx2", ".dds")):
+    if lower.endswith((".png", ".jpg", ".jpeg", ".tga", ".exr", ".hdr", ".ktx2", ".dds")):
         return "texture"
     return "other"

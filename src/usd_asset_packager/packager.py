@@ -7,6 +7,7 @@ from typing import Dict, List
 
 from pxr import Usd, UsdUtils
 
+from .converter import make_converter
 from .copy_utils import copy_asset
 from .mdl import collect_mdl_search_paths, warn_unresolved_mdls
 from .report import write_mdl_env, write_report
@@ -28,6 +29,8 @@ class Packager:
         collision_strategy: str = "keep_tree",
         flatten: str = "none",
         log_level: str = "INFO",
+        convert_gltf: bool = True,
+        converter: str = "omni",
     ) -> None:
         self.input_path = input_path
         self.out_dir = out_dir
@@ -36,6 +39,8 @@ class Packager:
         self.dry_run = dry_run
         self.collision_strategy = collision_strategy
         self.flatten = flatten
+        self.convert_gltf = convert_gltf
+        self.converter = converter
         self.logger = self._setup_logging(log_level)
 
     def _setup_logging(self, level: str) -> logging.Logger:
@@ -85,14 +90,18 @@ class Packager:
 
         if not self.dry_run:
             base_root = self.input_path.parent
+            converter_backend = make_converter(self.converter, self.logger) if self.convert_gltf else None
             for asset in assets:
                 if asset.asset_type in ("texture", "mdl"):
-                    action = copy_asset(asset, self.out_dir, self.collision_strategy, base_root, layer_real_map, self.logger)
+                    action = copy_asset(asset, self.out_dir, self.collision_strategy, base_root, layer_real_map,
+                                        self.logger, converter_backend, self.convert_gltf)
                 elif asset.asset_type == "glb":
                     # glb 必须转换为 usd 才能参与 rewrite/flatten
-                    action = copy_asset(asset, self.out_dir, self.collision_strategy, base_root, layer_real_map, self.logger)
+                    action = copy_asset(asset, self.out_dir, self.collision_strategy, base_root, layer_real_map,
+                                        self.logger, converter_backend, self.convert_gltf)
                 elif asset.asset_type == "usd" and self.copy_usd_deps:
-                    action = copy_asset(asset, self.out_dir, self.collision_strategy, base_root, layer_real_map, self.logger)
+                    action = copy_asset(asset, self.out_dir, self.collision_strategy, base_root, layer_real_map,
+                                        self.logger, converter_backend, self.convert_gltf)
                 else:
                     action = CopyAction(asset=asset, target_path=None, success=False, reason="copy skipped")
                 copy_actions.append(action)
@@ -127,7 +136,7 @@ class Packager:
         if not self.dry_run and self.flatten != "none":
             root_layer_path = layer_new_path.get(stage.GetRootLayer().identifier)
             if root_layer_path:
-                flat_path = root_layer_path.with_name(root_layer_path.stem + "_flatten.usda")
+                flat_path = root_layer_path.with_name(root_layer_path.stem + "_flatten.usd")
                 try:
                     packaged_stage = Usd.Stage.Open(str(root_layer_path))
                     flat_layer = UsdUtils.FlattenLayerStack(packaged_stage)
