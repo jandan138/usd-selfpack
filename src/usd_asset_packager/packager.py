@@ -4,6 +4,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Dict, List
+import os
 
 from pxr import Usd, UsdUtils
 
@@ -11,7 +12,7 @@ from .converter import make_converter
 from .copy_utils import copy_asset
 from .mdl import collect_mdl_search_paths, warn_unresolved_mdls
 from .report import write_mdl_env, write_report
-from .rewrite import rewrite_layers
+from .rewrite import rewrite_layer_file_asset_paths, rewrite_layers
 from .scan import scan_stage
 from .types import AssetRef, CopyAction, PackReport
 
@@ -111,6 +112,9 @@ class Packager:
         else:
             self.logger.info("dry-run 模式：不复制文件、不改写 USD")
 
+        if not self.dry_run:
+            self._ensure_output_aliases()
+
         # 构建新 layer 路径：以输入 USD 所在目录为基准保持树结构
         layer_new_path: Dict[str, Path] = {}
         base_root = self.input_path.parent
@@ -131,6 +135,47 @@ class Packager:
             report.rewrites = rewrite_actions
         else:
             self.logger.info("dry-run 不执行 rewrite")
+
+        # 额外：改写已复制的 USD 依赖文件（references/payload 引入的 layer 不在 root layer stack 里）
+        if not self.dry_run and self.copy_usd_deps:
+            usd_layer_out: Dict[str, Path] = {}
+            for cp in copy_actions:
+                if not (cp.success and cp.target_path and cp.asset.asset_type == "usd"):
+                    continue
+                # resolved_path 是原始绝对路径（最佳键）；同时兼容 original_path 为绝对路径的情况
+                if cp.asset.resolved_path:
+                    usd_layer_out[cp.asset.resolved_path] = Path(cp.target_path)
+                if cp.asset.original_path and cp.asset.original_path.startswith("/"):
+                    usd_layer_out[cp.asset.original_path] = Path(cp.target_path)
+
+            # 对每个 copied USD layer，按该 layer 中扫描到的引用构建 replacements，然后用 UsdUtils 修改该文件
+            extra_rewrites = 0
+            for src_layer_id, out_layer_path in usd_layer_out.items():
+                # 仅处理存在于输出的 USD 文件
+                if not out_layer_path.exists():
+                    continue
+                replacements: Dict[str, str] = {}
+                for asset in assets:
+                    if asset.layer_identifier != src_layer_id:
+                        continue
+                    if id(asset) not in copy_targets:
+                        continue
+                    target_abs = copy_targets[id(asset)]
+                    rel_path = os.path.relpath(target_abs, start=out_layer_path.parent)
+                    if asset.asset_type == "mdl" and asset.attr_name == "info:mdl:sourceAsset":
+                        rel_path = Path(target_abs).name
+                    # 多个位置可能引用同一路径；保持第一次映射即可
+                    replacements.setdefault(asset.original_path, rel_path)
+
+                if not replacements:
+                    continue
+                changed = rewrite_layer_file_asset_paths(out_layer_path, replacements, self.logger)
+                extra_rewrites += changed
+                if changed:
+                    self.logger.info("rewrote %d asset paths in copied usd layer: %s", changed, out_layer_path)
+
+            if extra_rewrites:
+                report.warnings.append(f"rewrote asset paths in copied USD deps: {extra_rewrites}")
 
         # flatten 层级：将改写后的 root 打平成单一 layer（纹理仍为外部相对路径）
         if not self.dry_run and self.flatten != "none":
@@ -157,3 +202,40 @@ class Packager:
         write_report(report, self.out_dir)
         self.logger.info("packaging finished; report at %s", self.out_dir / "report.json")
         return report
+
+    def _ensure_output_aliases(self) -> None:
+        """Ensure common case/structure aliases exist in output.
+
+        Many upstream assets (USD and MDL) reference folders like 'Materials' and
+        'Textures' with specific casing and/or expect a 'Textures' folder next
+        to the MDL module. Our packer normalizes to lowercase ('materials',
+        'textures'), so we provide symlinks to preserve compatibility.
+        """
+
+        materials = self.out_dir / "materials"
+        textures = self.out_dir / "textures"
+
+        if materials.exists() and not (self.out_dir / "Materials").exists():
+            try:
+                os.symlink("materials", self.out_dir / "Materials")
+                self.logger.info("created alias: %s -> %s", self.out_dir / "Materials", materials)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("failed to create Materials alias symlink: %s", exc)
+
+        if textures.exists() and not (self.out_dir / "Textures").exists():
+            try:
+                os.symlink("textures", self.out_dir / "Textures")
+                self.logger.info("created alias: %s -> %s", self.out_dir / "Textures", textures)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("failed to create Textures alias symlink: %s", exc)
+
+        # MDL modules often reference resources relative to the module dir, e.g. "./Textures/foo.png".
+        # Provide a symlink so those resolve to the packed texture directory.
+        if materials.exists() and textures.exists():
+            mdl_textures = materials / "Textures"
+            if not mdl_textures.exists():
+                try:
+                    os.symlink("../textures", mdl_textures)
+                    self.logger.info("created alias: %s -> %s", mdl_textures, textures)
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.warning("failed to create materials/Textures symlink: %s", exc)

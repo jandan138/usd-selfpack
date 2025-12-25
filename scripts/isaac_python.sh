@@ -66,6 +66,19 @@ ISAAC_ROOT="$(resolve_isaac_root)" || {
 
 RUNNER="${ISAAC_ROOT}/python.sh"
 
+# Ensure this repo's Python package is importable when running scripts/modules.
+# This wrapper is intended to be invoked from the repo root, but we also
+# compute the wrapper location to be robust.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -d "${REPO_ROOT}/src" ]]; then
+  if [[ -z "${PYTHONPATH:-}" ]]; then
+    export PYTHONPATH="${REPO_ROOT}/src"
+  else
+    export PYTHONPATH="${REPO_ROOT}/src:${PYTHONPATH}"
+  fi
+fi
+
 # Optional environment preparation similar to /isaac-sim/isaac_python.sh
 # 1) Prepend all directories that contain a 'pxr' package under extscache to PYTHONPATH
 EXTSCACHE_DIR="${ISAAC_ROOT}/extscache"

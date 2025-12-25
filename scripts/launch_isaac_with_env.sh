@@ -13,6 +13,12 @@ fi
 
 OUT_DIR="$1"
 shift || true
+
+# Normalize to absolute path to make env + relative MDL paths robust.
+if [[ -d "$OUT_DIR" ]]; then
+  OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+fi
+
 ENV_FILE="${OUT_DIR}/env/mdl_paths.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -78,4 +84,22 @@ if [[ ! -x "$RUNNER" ]]; then
   exit 1
 fi
 
-exec "$RUNNER" "$@"
+ARGS=("$@")
+
+# Omniverse Kit refuses to run as root unless explicitly allowed.
+# Prefer running as a non-root user; this is a best-effort fallback for containers.
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+  export OMNI_KIT_ALLOW_ROOT=1
+  has_allow_root=0
+  for arg in "${ARGS[@]}"; do
+    if [[ "$arg" == "--allow-root" ]]; then
+      has_allow_root=1
+      break
+    fi
+  done
+  if [[ "$has_allow_root" -eq 0 ]]; then
+    ARGS=("--allow-root" "${ARGS[@]}")
+  fi
+fi
+
+exec "$RUNNER" "${ARGS[@]}"

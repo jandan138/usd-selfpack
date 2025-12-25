@@ -14,4 +14,7 @@
 - 版本与变更
   - [docs/release/changelog.md](release/changelog.md)
 
+- 调试记录
+  - [docs/debug_sessions/index.md](debug_sessions/index.md)
+
 > 约定：所有命令均通过 [scripts/isaac_python.sh](../scripts/isaac_python.sh) 运行；参考代码文件统一使用相对路径链接，便于跳转与更新。

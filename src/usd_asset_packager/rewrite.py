@@ -6,8 +6,45 @@ from pathlib import Path
 from typing import Dict, List
 
 from pxr import Sdf, Usd
+from pxr import UsdUtils
 
 from .types import AssetRef, RewriteAction
+
+
+def rewrite_layer_file_asset_paths(layer_path: Path, replacements: Dict[str, str], logger: logging.Logger) -> int:
+    """Rewrite asset paths inside a USD layer file in-place.
+
+    This is useful for referenced USD dependencies that are copied into the output
+    folder but are not part of the stage's root layer stack.
+
+    Parameters
+    - layer_path: output layer path to modify.
+    - replacements: mapping from original authored asset path string to new string.
+    """
+
+    if not replacements:
+        return 0
+    layer = Sdf.Layer.FindOrOpen(str(layer_path))
+    if not layer:
+        logger.warning("failed to open layer for rewrite: %s", layer_path)
+        return 0
+
+    changed = 0
+
+    def _fn(asset_path: str) -> str:
+        nonlocal changed
+        new_val = replacements.get(asset_path)
+        if new_val and new_val != asset_path:
+            changed += 1
+            return new_val
+        return asset_path
+
+    UsdUtils.ModifyAssetPaths(layer, _fn)
+    try:
+        layer.Save()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failed to save rewritten layer %s: %s", layer_path, exc)
+    return changed
 
 
 def _get_list_items(list_op: Sdf.ListOp, kind: str):
@@ -88,6 +125,13 @@ def rewrite_layers(stage: Usd.Stage, assets: List[AssetRef], copy_targets: Dict[
         if not new_layer_path:
             continue
         rel_path = os.path.relpath(target_abs, start=new_layer_path.parent)
+        # USD MDL schemas often store source modules in `info:mdl:sourceAsset`.
+        # In practice, Isaac/Kit's USD->MDL bridge may convert that asset path into an
+        # MDL module name; paths containing ".." frequently fail to resolve/compile.
+        # Since we already add the packed materials directory to MDL search paths,
+        # author the module as a simple basename to avoid parent traversals.
+        if asset.asset_type == "mdl" and asset.attr_name == "info:mdl:sourceAsset":
+            rel_path = Path(target_abs).name
         prim = stage.GetPrimAtPath(asset.prim_path)
         if not prim:
             rewrites.append(
