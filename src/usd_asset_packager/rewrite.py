@@ -125,13 +125,6 @@ def rewrite_layers(stage: Usd.Stage, assets: List[AssetRef], copy_targets: Dict[
         if not new_layer_path:
             continue
         rel_path = os.path.relpath(target_abs, start=new_layer_path.parent)
-        # USD MDL schemas often store source modules in `info:mdl:sourceAsset`.
-        # In practice, Isaac/Kit's USD->MDL bridge may convert that asset path into an
-        # MDL module name; paths containing ".." frequently fail to resolve/compile.
-        # Since we already add the packed materials directory to MDL search paths,
-        # author the module as a simple basename to avoid parent traversals.
-        if asset.asset_type == "mdl" and asset.attr_name == "info:mdl:sourceAsset":
-            rel_path = Path(target_abs).name
         prim = stage.GetPrimAtPath(asset.prim_path)
         if not prim:
             rewrites.append(
@@ -142,7 +135,8 @@ def rewrite_layers(stage: Usd.Stage, assets: List[AssetRef], copy_targets: Dict[
             continue
 
         # references / payloads 改写 metadata listOp
-        if asset.attr_name in ("references", "payloads"):
+        # USD uses metadata key 'payload' (singular).
+        if asset.attr_name in ("references", "payloads", "payload"):
             meta_name = asset.attr_name
             list_op = prim.GetMetadata(meta_name)
             if not list_op:
@@ -158,8 +152,16 @@ def rewrite_layers(stage: Usd.Stage, assets: List[AssetRef], copy_targets: Dict[
                 new_items = []
                 for item in items:
                     if getattr(item, "assetPath", "") == asset.original_path:
-                        new_item = type(item)(assetPath=rel_path, primPath=item.primPath,
-                                              layerOffset=item.layerOffset, customData=item.customData)
+                        if meta_name == "references":
+                            new_item = type(item)(
+                                assetPath=rel_path,
+                                primPath=item.primPath,
+                                layerOffset=item.layerOffset,
+                                customData=item.customData,
+                            )
+                        else:
+                            # Sdf.Payload in some bindings doesn't expose customData.
+                            new_item = Sdf.Payload(rel_path, item.primPath, item.layerOffset)
                         new_items.append(new_item)
                         updated = True
                     else:
@@ -167,7 +169,7 @@ def rewrite_layers(stage: Usd.Stage, assets: List[AssetRef], copy_targets: Dict[
                 return new_items
 
             try:
-                new_op = Sdf.ReferenceListOp()
+                new_op = Sdf.ReferenceListOp() if meta_name == "references" else Sdf.PayloadListOp()
                 _set_list_items(new_op, "Explicit", _replace(_get_list_items(list_op, "Explicit")))
                 _set_list_items(new_op, "Added", _replace(_get_list_items(list_op, "Added")))
                 _set_list_items(new_op, "Prepended", _replace(_get_list_items(list_op, "Prepended")))

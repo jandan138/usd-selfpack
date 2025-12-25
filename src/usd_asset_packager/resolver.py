@@ -29,15 +29,59 @@ def resolve_with_layer(layer_path: str, asset_path: str) -> Optional[str]:
         return None
     if is_remote(asset_path):
         return None
+    def _resolve_case_insensitive(base: Path, rel: Path) -> Optional[Path]:
+        """Resolve a relative path against base, case-insensitively per segment.
+
+        This helps with upstream assets authored with inconsistent casing (e.g. "Textures" vs "textures")
+        when running on Linux.
+        """
+
+        cur = base
+        for part in rel.parts:
+            if part in ("", "."):
+                continue
+            if part == "..":
+                cur = cur.parent
+                continue
+            # Prefer exact match first.
+            exact = cur / part
+            if exact.exists():
+                cur = exact
+                continue
+            if not cur.is_dir():
+                return None
+            try:
+                folded = part.casefold()
+                match = None
+                with os.scandir(cur) as it:
+                    for ent in it:
+                        if ent.name.casefold() == folded:
+                            match = ent.path
+                            break
+                if match is None:
+                    return None
+                cur = Path(match)
+            except Exception:
+                return None
+        return cur if cur.exists() else None
+
     # Sdf.AssetPath 可能带有 assetPath 和 resolvedPath，这里仅做文件存在性检查。
     base_dir = Path(layer_path).parent
-    candidate = (base_dir / asset_path).expanduser().resolve()
-    if candidate.exists():
-        return str(candidate)
-    # 如果 asset_path 已是绝对路径
-    abs_candidate = Path(asset_path).expanduser()
-    if abs_candidate.exists():
-        return str(abs_candidate.resolve())
+    # If asset_path is relative, try direct then case-insensitive.
+    if not Path(asset_path).is_absolute():
+        try:
+            candidate = (base_dir / asset_path).expanduser().resolve()
+        except Exception:
+            candidate = None
+        if candidate and candidate.exists():
+            return str(candidate)
+        ci = _resolve_case_insensitive(base_dir, Path(asset_path))
+        if ci and ci.exists():
+            return str(ci.resolve())
+    else:
+        candidate = Path(asset_path).expanduser()
+        if candidate.exists():
+            return str(candidate.resolve())
     return None
 
 

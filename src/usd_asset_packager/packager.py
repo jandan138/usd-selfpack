@@ -114,6 +114,7 @@ class Packager:
 
         if not self.dry_run:
             self._ensure_output_aliases()
+            self._ensure_mdl_dir_texture_aliases(copy_actions)
 
         # 构建新 layer 路径：以输入 USD 所在目录为基准保持树结构
         layer_new_path: Dict[str, Path] = {}
@@ -135,6 +136,12 @@ class Packager:
             report.rewrites = rewrite_actions
         else:
             self.logger.info("dry-run 不执行 rewrite")
+
+        if not self.dry_run:
+            # Ensure each directory containing USD layers has `Materials`/`Textures`
+            # aliases, so authored paths like `Materials/foo.mdl` resolve from any
+            # nested layer without using "..".
+            self._ensure_layer_dir_aliases(layer_new_path)
 
         # 额外：改写已复制的 USD 依赖文件（references/payload 引入的 layer 不在 root layer stack 里）
         if not self.dry_run and self.copy_usd_deps:
@@ -162,8 +169,6 @@ class Packager:
                         continue
                     target_abs = copy_targets[id(asset)]
                     rel_path = os.path.relpath(target_abs, start=out_layer_path.parent)
-                    if asset.asset_type == "mdl" and asset.attr_name == "info:mdl:sourceAsset":
-                        rel_path = Path(target_abs).name
                     # 多个位置可能引用同一路径；保持第一次映射即可
                     replacements.setdefault(asset.original_path, rel_path)
 
@@ -203,6 +208,45 @@ class Packager:
         self.logger.info("packaging finished; report at %s", self.out_dir / "report.json")
         return report
 
+    def _ensure_mdl_dir_texture_aliases(self, copy_actions: List[CopyAction]) -> None:
+        """Ensure each copied MDL directory has a `Textures` alias.
+
+        Many collected MDL files reference resources like "./Textures/foo.png".
+        On Linux this can fail if the actual folder is `textures` or if we pack
+        textures under `out_dir/textures/...`. We create a per-directory symlink
+        `Textures` pointing at the corresponding packed texture subfolder.
+        """
+
+        materials_root = self.out_dir / "materials"
+        textures_root = self.out_dir / "textures"
+
+        for cp in copy_actions:
+            if not (cp.success and cp.target_path and cp.asset.asset_type == "mdl"):
+                continue
+            try:
+                mdl_path = Path(cp.target_path)
+                mdl_dir = mdl_path.parent
+                rel_dir = mdl_dir.relative_to(materials_root)
+            except Exception:
+                continue
+
+            # Common upstream layout is <Materials>/textures/*.png
+            candidate = textures_root / rel_dir / "textures"
+            if not candidate.exists():
+                # Fall back to the corresponding directory itself.
+                candidate = textures_root / rel_dir
+            if not candidate.exists():
+                continue
+
+            link = mdl_dir / "Textures"
+            if link.exists():
+                continue
+            try:
+                rel_target = os.path.relpath(candidate, start=mdl_dir)
+                os.symlink(rel_target, link)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug("failed to create MDL Textures alias %s -> %s: %s", link, candidate, exc)
+
     def _ensure_output_aliases(self) -> None:
         """Ensure common case/structure aliases exist in output.
 
@@ -239,3 +283,36 @@ class Packager:
                     self.logger.info("created alias: %s -> %s", mdl_textures, textures)
                 except Exception as exc:  # noqa: BLE001
                     self.logger.warning("failed to create materials/Textures symlink: %s", exc)
+
+    def _ensure_layer_dir_aliases(self, layer_new_path: Dict[str, Path]) -> None:
+        materials = self.out_dir / "materials"
+        textures = self.out_dir / "textures"
+        if not (materials.exists() and textures.exists()):
+            return
+
+        dirs = {p.parent for p in layer_new_path.values()}
+        # Also include the directory of copied USD deps (typically assets/*)
+        dirs.add((self.out_dir / "assets"))
+
+        for d in sorted(dirs):
+            if not d.exists():
+                continue
+            # Avoid creating self-referential aliases inside the target folders.
+            if d == materials or d == textures:
+                continue
+
+            try:
+                mat_link = d / "Materials"
+                if not mat_link.exists():
+                    rel = os.path.relpath(materials, start=d)
+                    os.symlink(rel, mat_link)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug("failed to create Materials alias in %s: %s", d, exc)
+
+            try:
+                tex_link = d / "Textures"
+                if not tex_link.exists():
+                    rel = os.path.relpath(textures, start=d)
+                    os.symlink(rel, tex_link)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug("failed to create Textures alias in %s: %s", d, exc)
