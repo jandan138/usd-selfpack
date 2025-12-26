@@ -20,6 +20,10 @@
 - out_dir/report.json
 - out_dir/logs/packager.log
 
+补充：
+- 若打包过程被中断，重复运行同一 out_dir 时会尽量复用已拷贝文件（目标文件已存在且大小一致时跳过拷贝），以加快断点续跑。
+- 对不在 base_root 下的外部 USD 依赖，输出路径可能会采用哈希分桶目录以避免同名覆盖；这是预期行为。
+
 相关代码：
 - 报告与 MDL env 生成：[src/usd_asset_packager/report.py](../../src/usd_asset_packager/report.py)
 - 打包流程：[src/usd_asset_packager/packager.py](../../src/usd_asset_packager/packager.py)

@@ -58,7 +58,15 @@ def main() -> int:
         help="Where to write rendered outputs (defaults to <usd_dir>/logs/render_one_frame)",
     )
     ap.add_argument("--warmup-frames", type=int, default=60)
-    ap.add_argument("--resolution", default="256x256")
+    # Accept both forms:
+    # - `--resolution 256x256` (legacy)
+    # - `--resolution 256 256` (doc-friendly)
+    ap.add_argument(
+        "--resolution",
+        nargs="+",
+        default=["256", "256"],
+        help="Resolution as 'WxH' (e.g. 256x256) or two ints (e.g. 256 256)",
+    )
     args = ap.parse_args()
 
     usd_path = Path(args.usd)
@@ -69,12 +77,20 @@ def main() -> int:
         _load_env_file(args.env)
 
     out_dir = Path(args.out_dir) if args.out_dir else (usd_path.parent / "logs" / "render_one_frame")
+    out_dir = out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    m = re.match(r"^(\d+)x(\d+)$", args.resolution)
-    if not m:
-        raise SystemExit("--resolution must look like 256x256")
-    width, height = int(m.group(1)), int(m.group(2))
+    width: int
+    height: int
+    if len(args.resolution) == 1:
+        m = re.match(r"^(\d+)x(\d+)$", str(args.resolution[0]))
+        if not m:
+            raise SystemExit("--resolution must be '256x256' or '256 256'")
+        width, height = int(m.group(1)), int(m.group(2))
+    elif len(args.resolution) == 2:
+        width, height = int(args.resolution[0]), int(args.resolution[1])
+    else:
+        raise SystemExit("--resolution must be '256x256' or two ints")
 
     # Launch Kit
     from omni.isaac.kit import SimulationApp
@@ -83,9 +99,11 @@ def main() -> int:
 
     try:
         import omni.usd
+        import carb
 
         ctx = omni.usd.get_context()
-        ctx.open_stage(str(usd_path))
+        # Avoid relative-path ambiguities (and layer reload warnings) by opening via an absolute path.
+        ctx.open_stage(str(usd_path.resolve()))
 
         # Let extensions initialize + stage load.
         for _ in range(max(1, args.warmup_frames)):
@@ -100,6 +118,13 @@ def main() -> int:
         # Force a render via Replicator (offscreen). This tends to trigger material translation/MDL compilation.
         import omni.replicator.core as rep
 
+        # Ensure Replicator disk backend writes exactly under `out_dir`.
+        # Without this, Replicator may write under a default root like /root/omni.replicator_out.
+        try:
+            carb.settings.get_settings().set("/omni/replicator/backends/disk/root_dir", str(out_dir))
+        except Exception:
+            pass
+
         if cam_path is None:
             cam_prim = rep.create.camera(position=(0, 150, 120), look_at=(0, 0, 0))
         else:
@@ -108,7 +133,8 @@ def main() -> int:
         render_product = rep.create.render_product(cam_prim, (width, height))
 
         writer = rep.WriterRegistry.get("BasicWriter")
-        writer.initialize(output_dir=str(out_dir), rgb=True)
+        # With root_dir set, output_dir should be relative.
+        writer.initialize(output_dir=".", rgb=True)
         writer.attach([render_product])
 
         # Render a couple frames to be safe.

@@ -41,7 +41,10 @@ def plan_target_path(asset: AssetRef, out_dir: Path, collision_strategy: str, ba
     try:
         rel = Path(src).resolve().relative_to(base_root.resolve())
     except Exception:
-        rel = name
+        # When the source is outside base_root, fall back to a stable unique
+        # location to avoid basename collisions (e.g. many different instance.usd).
+        prefix = _hash_prefix(str(Path(src).resolve()))
+        rel = Path("external") / prefix / name
     if asset.asset_type == "glb":
         rel = Path(rel).with_suffix(".usd")
     return base / rel
@@ -67,6 +70,16 @@ def copy_asset(asset: AssetRef, out_dir: Path, collision_strategy: str, base_roo
     target = plan_target_path(asset, out_dir, collision_strategy, base_root)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
+
+        # Fast resume: if target already exists and looks identical, skip recopy.
+        # This is especially helpful when a long packaging run is interrupted.
+        if asset.asset_type != "glb" and target.exists():
+            try:
+                if src.is_file() and target.is_file() and src.stat().st_size == target.stat().st_size:
+                    return CopyAction(asset=asset, target_path=str(target), success=True, reason="already copied")
+            except Exception:
+                pass
+
         if asset.asset_type == "glb":
             if not convert_gltf:
                 return CopyAction(asset=asset, target_path=str(target), success=False,

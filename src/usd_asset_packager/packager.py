@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 import os
+import hashlib
 
 from pxr import Usd, UsdUtils
 
@@ -119,13 +120,19 @@ class Packager:
         # 构建新 layer 路径：以输入 USD 所在目录为基准保持树结构
         layer_new_path: Dict[str, Path] = {}
         base_root = self.input_path.parent
+
+        def _hash_prefix(text: str) -> str:
+            return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+
         for layer in stage.GetLayerStack():
             if not layer.realPath:
                 continue
             try:
                 rel = Path(layer.realPath).resolve().relative_to(base_root.resolve())
             except Exception:
-                rel = Path(layer.realPath).name
+                # Avoid collisions when multiple external layers share the same basename.
+                prefix = _hash_prefix(str(Path(layer.realPath).resolve()))
+                rel = Path("external_layers") / prefix / Path(layer.realPath).name
             target = self.out_dir / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             layer_new_path[layer.identifier] = target

@@ -16,3 +16,11 @@
 注意事项：
 - 仅处理已复制资产的相对路径；未复制的远程/缺失资产会被跳过并在 report 中标记。
 - 改写后会记录 before/after 以便排查。
+
+### 外部 layer（不在 base_root 下）的路径规划
+
+当某个 USD layer 的真实路径无法相对化到 base_root 时，不能简单使用 basename 作为输出路径：不同来源可能存在同名 layer（例如大量 `instance.usd`），会在 out_dir 下发生静默覆盖，导致最终 stage 组成结果错误。
+
+当前策略：
+- 对这类“外部 layer”使用哈希分桶目录（例如 `external_layers/<hash>/<basename>` 一类），保证不同来源不会互相覆盖。
+- 仍会在改写阶段把 sublayer/reference/payload 指向新的相对路径。
