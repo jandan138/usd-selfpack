@@ -19,6 +19,7 @@ dist/
 # IDE/editor
 .vscode/
 .idea/
+.trae/
 
 # System
 .DS_Store
@@ -29,4 +30,3 @@ output/
 # Temporary scratch files
 scripts/_tmp_*.py
 output/_tmp_*
-
