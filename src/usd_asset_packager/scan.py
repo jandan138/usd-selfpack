@@ -197,6 +197,17 @@ def scan_stage(stage: Usd.Stage, logger: logging.Logger) -> List[AssetRef]:
 
     asset_refs: List[AssetRef] = []
 
+    # Some scenes rely on resolver search paths, so authored reference strings
+    # (e.g. "../../models/.../instance.usd") may not be directly resolvable via
+    # simple path joins. However, once the stage opens successfully, USD knows
+    # the resolved file-backed layers that are actually used by the composed
+    # stage.
+    #
+    # We record these used file-backed layers as USD dependencies so that
+    # `--copy-usd-deps` can produce a self-contained output even when we cannot
+    # deterministically resolve the authored reference strings.
+    layer_stack_ids = {layer.identifier for layer in stage.GetLayerStack()}
+
     # 1) layer subLayers
     for layer in stage.GetLayerStack():
         for sub in layer.subLayerPaths:
@@ -333,6 +344,27 @@ def scan_stage(stage: Usd.Stage, logger: logging.Logger) -> List[AssetRef]:
     if mdl_tex_extra:
         asset_refs.extend(mdl_tex_extra)
         logger.info("scan: added %d mdl resource deps", len(mdl_tex_extra))
+
+    # 6) referenced/payloaded file-backed layers actually used by the stage
+    # NOTE: `GetUsedLayers()` includes sublayers and referenced layers; we skip
+    # anything already in the root layer stack (those are exported separately).
+    used_layer_extra: List[AssetRef] = []
+    try:
+        for layer in stage.GetUsedLayers():
+            if not layer:
+                continue
+            if layer.identifier in layer_stack_ids:
+                continue
+            real = getattr(layer, "realPath", None)
+            if not real:
+                continue
+            _record_asset(used_layer_extra, "usd", real, real, "(usedLayer)", "(usedLayer)", "usedLayer")
+    except Exception:
+        used_layer_extra = []
+
+    if used_layer_extra:
+        asset_refs.extend(used_layer_extra)
+        logger.info("scan: added %d used USD layers", len(used_layer_extra))
 
     logger.info("scan completed: %d assets", len(asset_refs))
     return asset_refs

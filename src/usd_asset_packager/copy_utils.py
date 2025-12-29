@@ -41,10 +41,63 @@ def plan_target_path(asset: AssetRef, out_dir: Path, collision_strategy: str, ba
     try:
         rel = Path(src).resolve().relative_to(base_root.resolve())
     except Exception:
+        # Special-case MDL: modules frequently use relative imports like
+        # `using .::OmniUe4Base import *;` which requires imported modules to be
+        # colocated in the same directory. For external MDL sources (outside
+        # base_root) we therefore group by the *source directory* instead of the
+        # individual file, so that siblings land under the same output folder.
+        if asset.asset_type == "mdl":
+            try:
+                src_dir = Path(src).resolve().parent
+                prefix = _hash_prefix(str(src_dir))
+                rel = Path("external") / prefix / name
+            except Exception:
+                prefix = _hash_prefix(str(Path(src).resolve()))
+                rel = Path("external") / prefix / name
+
+        # Special-case textures referenced from inside MDL code. These are recorded
+        # with layer_identifier == <abs path to mdl> by the scanner.
+        # To keep `./Textures/...` working, place them under a texture package
+        # folder that shares the same directory-hash as the owning MDL directory.
+        elif asset.asset_type == "texture":
+            try:
+                mdl_src = Path(asset.layer_identifier)
+                if mdl_src.suffix.lower() == ".mdl" and mdl_src.is_absolute():
+                    mdl_dir = mdl_src.resolve().parent
+                    prefix = _hash_prefix(str(mdl_dir))
+                    tex_abs = Path(src).resolve()
+                    rel_from_mdl = tex_abs.relative_to(mdl_dir)
+                    parts = list(rel_from_mdl.parts)
+                    if parts and parts[0].lower() == "textures":
+                        parts = parts[1:]
+                    rel_tex = Path(*parts) if parts else Path(tex_abs.name)
+                    rel = Path("external") / prefix / "textures" / rel_tex
+                else:
+                    raise ValueError("not an mdl-owned texture")
+            except Exception:
+                prefix = _hash_prefix(str(Path(src).resolve()))
+                rel = Path("external") / prefix / name
+
         # When the source is outside base_root, fall back to a stable unique
         # location to avoid basename collisions (e.g. many different instance.usd).
-        prefix = _hash_prefix(str(Path(src).resolve()))
-        rel = Path("external") / prefix / name
+        #
+        # Special-case: some datasets expect a preserved subtree like
+        # ".../models/..." so that relative references such as "../../models/..."
+        # keep working after we copy referenced USD layers under `out_dir/assets`.
+        elif asset.asset_type == "usd":
+            try:
+                parts = Path(src).resolve().parts
+                if "models" in parts:
+                    idx = len(parts) - 1 - list(reversed(parts)).index("models")
+                    rel = Path(*parts[idx:])
+                else:
+                    raise ValueError("no models marker")
+            except Exception:
+                prefix = _hash_prefix(str(Path(src).resolve()))
+                rel = Path("external") / prefix / name
+        else:
+            prefix = _hash_prefix(str(Path(src).resolve()))
+            rel = Path("external") / prefix / name
     if asset.asset_type == "glb":
         rel = Path(rel).with_suffix(".usd")
     return base / rel
