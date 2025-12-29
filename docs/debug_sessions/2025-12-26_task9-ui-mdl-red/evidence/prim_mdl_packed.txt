@@ -1,0 +1,4 @@
+prim: /root/obj_table
+exists: True
+bound_material: <None>
+binding_rel: <None>
