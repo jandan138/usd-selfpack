@@ -78,6 +78,19 @@ class Packager:
         assets = scan_stage(stage, self.logger)
         report.assets = assets
 
+        # GLB 依赖检查：如果发现 GLB 且位于非 root layer stack，强制要求 copy_usd_deps
+        # 否则这些引用层不会被复制，也就无法改写其内部的 .glb -> .usd 引用
+        has_deep_glb = False
+        root_layer_ids = {l.identifier for l in stage.GetLayerStack()}
+        for asset in assets:
+            if asset.asset_type == "glb" and asset.layer_identifier not in root_layer_ids:
+                has_deep_glb = True
+                break
+        
+        if has_deep_glb and self.convert_gltf and not self.copy_usd_deps:
+            self.logger.warning("Detected GLB assets in referenced layers. Auto-enabling --copy-usd-deps to ensure GLB->USD rewrite applies.")
+            self.copy_usd_deps = True
+
         # 记录 layer 真实路径，供相对解析
         layer_real_map: Dict[str, str] = {}
         for layer in stage.GetLayerStack():
