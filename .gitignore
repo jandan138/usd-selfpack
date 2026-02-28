@@ -21,6 +21,9 @@ dist/
 .idea/
 .trae/
 
+# Claude Code agent memory
+.claude/
+
 # System
 .DS_Store
 
